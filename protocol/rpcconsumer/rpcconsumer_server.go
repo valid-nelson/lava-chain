@@ -21,6 +21,7 @@ import (
 	"github.com/lavanet/lava/v2/protocol/metrics"
 	"github.com/lavanet/lava/v2/protocol/performance"
 	"github.com/lavanet/lava/v2/utils"
+	"github.com/lavanet/lava/v2/utils/lavaslices"
 	"github.com/lavanet/lava/v2/utils/protocopy"
 	"github.com/lavanet/lava/v2/utils/rand"
 	conflicttypes "github.com/lavanet/lava/v2/x/conflict/types"
@@ -414,6 +415,8 @@ func (rpccs *RPCConsumerServer) ProcessRelaySend(ctx context.Context, directiveH
 	startNewBatchTicker := time.NewTicker(relayTimeout)
 	defer startNewBatchTicker.Stop()
 	numberOfRetriesLaunched := 0
+	triedSendingBlockHashToArchiveNode := false
+	isBlockHashRequest := chainMessage.GetRequestedBlocksHashes() != nil
 	for {
 		select {
 		case success := <-gotResults:
@@ -424,6 +427,18 @@ func (rpccs *RPCConsumerServer) ProcessRelaySend(ctx context.Context, directiveH
 			if !relayProcessor.ShouldRetry(numberOfRetriesLaunched) {
 				return relayProcessor, nil
 			}
+
+			if isBlockHashRequest {
+				// user requested a hash, and we don't have a result
+				// we can try to send it to an archive node, but only once to avoid spamming archive providers
+				if !triedSendingBlockHashToArchiveNode {
+					// add the archive extension if it's not already there
+					if !lavaslices.Contains(relayRequestData.Extensions, extensionslib.ExtensionTypeArchive) {
+						relayRequestData.Extensions = append(relayRequestData.Extensions, extensionslib.ExtensionTypeArchive)
+					}
+				}
+			}
+
 			// otherwise continue sending another relay
 			err := rpccs.sendRelayToProvider(processingCtx, chainMessage, relayRequestData, dappID, consumerIp, relayProcessor, nil)
 			go validateReturnCondition(err)
@@ -432,6 +447,11 @@ func (rpccs *RPCConsumerServer) ProcessRelaySend(ctx context.Context, directiveH
 			// so it will just wait for the entire duration of the relay
 			if !lavasession.PairingListEmptyError.Is(err) {
 				numberOfRetriesLaunched++
+
+				// set the flag to true if we tried sending the block hash to the archive node, so we don't try again
+				if isBlockHashRequest {
+					triedSendingBlockHashToArchiveNode = true
+				}
 			}
 		case <-startNewBatchTicker.C:
 			// only trigger another batch for non BestResult relays or if we didn't pass the retry limit.
