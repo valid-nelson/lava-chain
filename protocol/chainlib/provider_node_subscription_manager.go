@@ -332,6 +332,13 @@ func (pnsm *ProviderNodeSubscriptionManager) AddConsumer(ctx context.Context, re
 			connectedConsumers:           connectedConsumers,
 		}
 
+		channelToConnectedConsumers.connectedConsumers[consumerAddrString] = make(map[string]*connectedConsumerContainer)
+		channelToConnectedConsumers.connectedConsumers[consumerAddrString][consumerProcessGuid] = &connectedConsumerContainer{
+			consumerChannel:    common.NewSafeChannelSender(ctx, consumerChannel),
+			firstSetupRequest:  copiedRequest,
+			consumerSDKAddress: consumerAddr,
+		}
+
 		// now we can lock after we have a successful subscription.
 		pnsm.lock.Lock()
 		defer pnsm.lock.Unlock()
@@ -534,6 +541,7 @@ func (pnsm *ProviderNodeSubscriptionManager) handleNewNodeMessage(ctx context.Co
 			go connectedConsumerContainer.consumerChannel.Send(relayMessageFromNode)
 		}
 	}
+
 	return nil
 }
 
